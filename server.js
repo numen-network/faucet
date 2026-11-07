@@ -5,7 +5,7 @@ import { Hono } from 'hono'
 import { html } from 'hono/html'
 import ipaddr from 'ipaddr.js'
 import { ApiPromise, Keyring, WsProvider } from '@polkadot/api'
-import { checkAddress, cryptoWaitReady, encodeAddress, evmToAddress, isEthereumAddress } from '@polkadot/util-crypto'
+import { checkAddress, cryptoWaitReady, encodeAddress, isEthereumAddress } from '@polkadot/util-crypto'
 
 const HOUR = 60 * 60 * 1000
 const ROWS = 25
@@ -44,10 +44,10 @@ export function addressLead(ss58) {
   return low.slice(0, i)
 }
 
-// pallet-evm keeps an H160's balance on the account HashedAddressMapping derives from it
-export function recipient(address, ss58) {
-  if (isEthereumAddress(address)) return evmToAddress(address, ss58)
-  return checkAddress(address, ss58)[0] ? address : null
+// pallet-revive resolves an H160 to its mapped account, or else to the H160 padded with twelve 0xEE bytes
+export async function recipient(address, chain) {
+  if (!isEthereumAddress(address)) return checkAddress(address, chain.ss58)[0] ? address : null
+  return (await chain.originalAccount(address)) ?? encodeAddress(`${address}${'ee'.repeat(12)}`, chain.ss58)
 }
 
 // two decimals, cut and never rounded, with ≈ in front once the cut loses a nonzero digit
@@ -106,7 +106,7 @@ export function createApp(chain, { limitCoins, windowHours, explorer, sendsPath 
   }
 
   async function claim(key, address, amountText) {
-    const to = recipient(address, chain.ss58)
+    const to = await recipient(address, chain)
     if (!to) return bad(`Not a ${lead} or 0x address.`)
     const amount = /^\d+$/.test(amountText) ? BigInt(amountText) * unit : 0n
     if (!amount) return bad(`Enter a whole number of ${chain.symbol}.`)
@@ -279,6 +279,10 @@ export async function connect(rpc, suri) {
     ss58,
     address: pair.address,
     live,
+    async originalAccount(h160) {
+      const account = await api.query.revive.originalAccount(h160)
+      return account.isSome ? encodeAddress(account.unwrap(), ss58) : null
+    },
     // the runtime's nonce api cannot see the pool, accountNextIndex can
     async send(to, amount) {
       const nonce = await api.rpc.system.accountNextIndex(pair.address)

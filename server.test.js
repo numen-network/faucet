@@ -16,14 +16,15 @@ mock.method(console, 'log', () => {})
 const UNIT = 10n ** 18n
 const ALICE = 'nu7SVAyQhPoGBJfFg7di66oYTV2KVBBeCw3Gt9qTRE2zpSUyb'
 const ALICE_GENERIC = '5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY'
+const ALICE_H160 = '0x9621dde636de098b43efb0fa9b61facfe328f99d'
 const H160 = '0x1234567890abcdef1234567890abcdef12345678'
-const H160_MIRROR = 'nu2uaQWzSyDzXHrgd78sQL2871qL2LpPU6kHeeb4ETtXfnASg'
+const H160_FALLBACK = 'nu347WpTCXVBp91rqygK1XLhSGitvqc2xfSwTD8YAPqyaNtuu'
 const BOB_KEY = '0x8eaf04151687736326c9fea17e25fc5287613693c912909cb226aa4794f26a48'
 const FAUCET = encodeAddress(BOB_KEY, 14240)
 const EXPLORER = 'http://127.0.0.1:3000'
 const IP = '203.0.113.9'
 
-function fakeChain() {
+function fakeChain(originals = {}) {
   const sent = []
   return {
     name: 'Numen Development',
@@ -33,6 +34,9 @@ function fakeChain() {
     address: FAUCET,
     live: { balance: 49_999_999n * UNIT + 998_765_432_109_876_543n, best: 204_123, finalized: 204_121 },
     sent,
+    async originalAccount(h160) {
+      return originals[h160] ?? null
+    },
     async send(to, amount) {
       sent.push({ to, amount })
       return `0x${String(sent.length).padStart(64, '0')}`
@@ -62,10 +66,16 @@ test('a nu address gets the amount it asks for', async () => {
   assert.deepEqual(chain.sent, [{ to: ALICE, amount: 60_000n * UNIT }])
 })
 
-test('a 0x address funds the account pallet-evm maps it to', async () => {
+test('a 0x address mapped to an account funds that account', async () => {
+  const { app, chain } = fresh(fakeChain({ [ALICE_H160]: ALICE }))
+  assert.match(await claim(app, IP, ALICE_H160, '100000'), /Sent 100,000 tNUMN\./)
+  assert.deepEqual(chain.sent, [{ to: ALICE, amount: 100_000n * UNIT }])
+})
+
+test('an unmapped 0x address funds its 0xEE-padded account', async () => {
   const { app, chain } = fresh()
   assert.match(await claim(app, IP, H160, '100000'), /Sent 100,000 tNUMN\./)
-  assert.deepEqual(chain.sent, [{ to: H160_MIRROR, amount: 100_000n * UNIT }])
+  assert.deepEqual(chain.sent, [{ to: H160_FALLBACK, amount: 100_000n * UNIT }])
 })
 
 test('addresses outside nu and 0x are refused', async () => {
@@ -241,7 +251,7 @@ test('the page follows the name, symbol, decimals and prefix of its chain', asyn
   await claim(app, '198.51.100.1', H160, '1')
   assert.deepEqual(other.sent, [
     { to: ALICE_GENERIC, amount: 1000n * coin },
-    { to: encodeAddress(decodeAddress(H160_MIRROR), 42), amount: coin },
+    { to: encodeAddress(decodeAddress(H160_FALLBACK), 42), amount: coin },
   ])
 })
 
